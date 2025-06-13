@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Drone Shooter FPS</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: #001f3f;
+      width: 100%;
+      height: 100%;
+    }
+    canvas {
+      display: block;
+    }
+    #crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 40px;
+      height: 40px;
+      margin-left: -20px;
+      margin-top: -20px;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    #crosshair::before, #crosshair::after {
+      content: '';
+      position: absolute;
+      background: #39FF14; /* verde neon */
+      box-shadow: 0 0 6px #39FF14;
+    }
+
+    #crosshair::before {
+      top: 50%;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      margin-top: -1px;
+    }
+
+    #crosshair::after {
+      left: 50%;
+      top: 0;
+      width: 2px;
+      height: 100%;
+      margin-left: -1px;
+    }
+
+    #controls {
+      position: absolute;
+      bottom: 30px;
+      left: 30px;
+      width: 150px;
+      height: 150px;
+      z-index: 10;
+    }
+
+    .dpad {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+
+    .dpad button {
+      position: absolute;
+      width: 50px;
+      height: 50px;
+      background: rgba(255, 255, 255, 0.2);
+      border: 1px solid white;
+      color: white;
+      font-size: 24px;
+      border-radius: 10px;
+    }
+
+    .up { top: 0; left: 50px; }
+    .down { bottom: 0; left: 50px; }
+    .left { top: 50px; left: 0; }
+    .right { top: 50px; right: 0; }
+
+    #shootBtn {
+      position: absolute;
+      bottom: 40px;
+      right: 40px;
+      width: 60px;
+      height: 60px;
+      background: red;
+      color: white;
+      font-size: 18px;
+      border: none;
+      border-radius: 50%;
+      z-index: 10;
+    }
+
+    #playerHealthBarContainer {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      width: 200px;
+      height: 25px;
+      background-color: #555;
+      border-radius: 8px;
+      border: 2px solid #333;
+      z-index: 15;
+    }
+
+    #playerHealthBar {
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(90deg, #0f0, #a0f600);
+      border-radius: 6px;
+      transition: width 0.3s ease;
+    }
+
+    #weapon {
+      position: absolute;
+      bottom: 100px;
+      right: 420px;
+      width: 200px;
+      pointer-events: none;
+      z-index: 15;
+    }
+  </style>
+</head>
+<body>
+
+<div id="crosshair"></div>
+
+<!-- Controles D-Pad -->
+<div id="controls">
+  <div class="dpad">
+    <button class="up" onclick="moveCamera('up')">▲</button>
+    <button class="down" onclick="moveCamera('down')">▼</button>
+    <button class="left" onclick="moveCamera('left')">◄</button>
+    <button class="right" onclick="moveCamera('right')">►</button>
+  </div>
+</div>
+
+<!-- Botão de atirar -->
+<button id="shootBtn" onclick="shoot()">FIRE</button>
+
+<!-- Imagem da arma -->
+<img id="weapon" src="arma.png" alt="Arma">
+
+<!-- Barra de vida do jogador -->
+<div id="playerHealthBarContainer">
+  <div id="playerHealthBar"></div>
+</div>
+
+<!-- Three.js -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script> 
+
+<script>
+  let scene, camera, renderer;
+  let bullets = [], enemyBullets = [], drones = [], droneHP = {};
+  let playerHP = 100;
+  let killCount = 0;
+  const MAX_KILLS = 10;
+
+  const healthBar = document.getElementById('playerHealthBar');
+
+  init();
+  animate();
+
+  function init() {
+    scene = new THREE.Scene();
+    const loader = new THREE.TextureLoader();
+    loader.load('https://i.imgur.com/eK3T4Ue.jpeg',  function(texture) {
+      scene.background = texture;
+    });
+
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    scene.add(camera);
+    camera.position.z = 5;
+
+    spawnDrones(2);
+  }
+
+  function moveCamera(dir) {
+    const speed = 0.1;
+    switch(dir) {
+      case 'left': camera.rotation.y += speed; break;
+      case 'right': camera.rotation.y -= speed; break;
+      case 'up': camera.rotation.x -= speed; break; // Inverte o sentido para subir/descer
+      case 'down': camera.rotation.x += speed; break;
+    }
+  }
+
+  function shoot() {
+    const bullet = new THREE.Mesh(
+      new THREE.SphereGeometry(0.05, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xffff00 })
+    );
+    bullet.position.copy(camera.position); // Tiro sai da posição da câmera
+
+    const dir = new THREE.Vector3(0, 0, -1); // Direção inicial do tiro
+    dir.applyQuaternion(camera.quaternion); // Aplica a rotação da câmera
+    bullet.velocity = dir.clone().multiplyScalar(0.5); // Velocidade do tiro
+
+    bullets.push(bullet);
+    scene.add(bullet);
+  }
+
+  function spawnDrones(n) {
+    for (let i = 0; i < n; i++) {
+      const droneTexture = new THREE.TextureLoader().load('drone.png');
+      const drone = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 0.34), // Proporção 218x75
+        new THREE.MeshBasicMaterial({ map: droneTexture, transparent: true })
+      );
+      drone.position.set((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 2, -10);
+      drone.directionX = 1;
+      drone.directionY = 1;
+      drone.shootTimer = 0;
+      scene.add(drone);
+      drones.push(drone);
+      droneHP[drone.uuid] = 2;
+    }
+  }
+
+  function updateHealthBar() {
+    const hpPercent = Math.max(playerHP, 0);
+    healthBar.style.width = hpPercent + '%';
+    if (hpPercent > 60) {
+      healthBar.style.background = 'linear-gradient(90deg, #0f0, #a0f600)';
+    } else if (hpPercent > 30) {
+      healthBar.style.background = 'linear-gradient(90deg, #f80, #f60)';
+    } else {
+      healthBar.style.background = 'linear-gradient(90deg, #f00, #a00)';
+    }
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    bullets.forEach((b, i) => {
+      b.position.add(b.velocity.clone());
+      if (b.position.z < -20 || b.position.length() > 100) {
+        scene.remove(b);
+        bullets.splice(i, 1);
+      }
+    });
+
+    enemyBullets.forEach((eb, i) => {
+      eb.position.add(eb.velocity.clone().multiplyScalar(0.3));
+      if (eb.position.distanceTo(camera.position) < 0.5) {
+        playerHP -= 10;
+        updateHealthBar();
+        scene.remove(eb);
+        enemyBullets.splice(i, 1);
+        if (playerHP <= 0) {
+          alert("Game Over!");
+          window.location.reload();
+        }
+      }
+      if (eb.position.z > 10) {
+        scene.remove(eb);
+        enemyBullets.splice(i, 1);
+      }
+    });
+
+    drones.forEach((d, i) => {
+      d.position.x += 0.05 * d.directionX;
+      d.position.y += 0.03 * d.directionY;
+      if (d.position.x > 3 || d.position.x < -3) d.directionX *= -1;
+      if (d.position.y > 2 || d.position.y < -2) d.directionY *= -1;
+
+      if (Date.now() - d.shootTimer > 2000) {
+        const eBullet = new THREE.Mesh(
+          new THREE.SphereGeometry(0.05, 8, 8),
+          new THREE.MeshBasicMaterial({ color: 0xff0000 })
+        );
+        eBullet.position.copy(d.position);
+        const dir = camera.position.clone().sub(d.position).normalize(); // Direção para a câmera
+        eBullet.velocity = dir;
+        enemyBullets.push(eBullet);
+        scene.add(eBullet);
+        d.shootTimer = Date.now();
+      }
+
+      bullets.forEach((b, j) => {
+        if (b.position.distanceTo(d.position) < 0.5) {
+          droneHP[d.uuid]--;
+          scene.remove(b);
+          bullets.splice(j, 1);
+          if (droneHP[d.uuid] <= 0) {
+            scene.remove(d);
+            drones.splice(i, 1);
+            delete droneHP[d.uuid];
+            killCount++;
+            if (killCount >= MAX_KILLS) {
+              alert("Parabéns! Você venceu o jogo!");
+              window.location.reload();
+            }
+            if (drones.length === 0) spawnDrones(2);
+          }
+        }
+      });
+    });
+
+    renderer.render(scene, camera);
+  }
+
+  updateHealthBar();
+</script>
+</body>
+</html>
